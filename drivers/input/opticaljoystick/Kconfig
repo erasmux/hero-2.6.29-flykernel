@@ -1,0 +1,19 @@
+#
+# Touchscreen driver configuration
+#
+menuconfig INPUT_OPTICALJOYSTICK
+	bool "Opticaljoystick"
+	help
+	  Say Y here, and a list of supported optical joystick will be displayed.
+	  This option doesn't affect the kernel.
+
+	  If unsure, say Y.
+
+if INPUT_OPTICALJOYSTICK
+
+config OPTICALJOYSTICK_CRUCIAL
+	tristate "Crucial Optical Joystick"
+	depends on MICROP_COMMON
+	help
+
+endif
