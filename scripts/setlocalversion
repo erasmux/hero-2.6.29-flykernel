@@ -8,6 +8,9 @@ usage() {
 
 cd "${1:-.}" || usage
 
+printf '%s' -flykernel-02
+exit
+
 # Check for git and a git repo.
 if head=`git rev-parse --verify --short HEAD 2>/dev/null`; then
 	# Do we have an untagged version?
