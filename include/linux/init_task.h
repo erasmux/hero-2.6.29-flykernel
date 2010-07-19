@@ -124,6 +124,72 @@ extern struct cred init_cred;
  *  INIT_TASK is used to set up the first task table, touch at
  * your own risk!. Base=0, limit=0x1fffff (=2MB)
  */
+#ifdef CONFIG_SCHED_BFS
+#define INIT_TASK(tsk)	\
+{									\
+	.state		= 0,						\
+	.stack		= &init_thread_info,				\
+	.usage		= ATOMIC_INIT(2),				\
+	.flags		= PF_KTHREAD,					\
+	.lock_depth	= -1,						\
+	.prio		= NORMAL_PRIO,					\
+	.static_prio	= MAX_PRIO-20,					\
+	.normal_prio	= NORMAL_PRIO,					\
+	.deadline	= 0,						\
+	.policy		= SCHED_NORMAL,					\
+	.cpus_allowed	= CPU_MASK_ALL,					\
+	.mm		= NULL,						\
+	.active_mm	= &init_mm,					\
+	.run_list	= LIST_HEAD_INIT(tsk.run_list),			\
+	.time_slice	= HZ,					\
+	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
+	.ptraced	= LIST_HEAD_INIT(tsk.ptraced),			\
+	.ptrace_entry	= LIST_HEAD_INIT(tsk.ptrace_entry),		\
+	.real_parent	= &tsk,						\
+	.parent		= &tsk,						\
+	.children	= LIST_HEAD_INIT(tsk.children),			\
+	.sibling	= LIST_HEAD_INIT(tsk.sibling),			\
+	.group_leader	= &tsk,						\
+	.real_cred	= &init_cred,					\
+	.cred		= &init_cred,					\
+	.cred_exec_mutex =						\
+		 __MUTEX_INITIALIZER(tsk.cred_exec_mutex),		\
+	.comm		= "swapper",					\
+	.thread		= INIT_THREAD,					\
+	.fs		= &init_fs,					\
+	.files		= &init_files,					\
+	.signal		= &init_signals,				\
+	.sighand	= &init_sighand,				\
+	.nsproxy	= &init_nsproxy,				\
+	.pending	= {						\
+		.list = LIST_HEAD_INIT(tsk.pending.list),		\
+		.signal = {{0}}},					\
+	.blocked	= {{0}},					\
+	.alloc_lock	= __SPIN_LOCK_UNLOCKED(tsk.alloc_lock),		\
+	.journal_info	= NULL,						\
+	.cpu_timers	= INIT_CPU_TIMERS(tsk.cpu_timers),		\
+	.fs_excl	= ATOMIC_INIT(0),				\
+	.pi_lock	= __SPIN_LOCK_UNLOCKED(tsk.pi_lock),		\
+	.timer_slack_ns = 50000, /* 50 usec default slack */		\
+	.pids = {							\
+		[PIDTYPE_PID]  = INIT_PID_LINK(PIDTYPE_PID),		\
+		[PIDTYPE_PGID] = INIT_PID_LINK(PIDTYPE_PGID),		\
+		[PIDTYPE_SID]  = INIT_PID_LINK(PIDTYPE_SID),		\
+	},								\
+	.dirties = INIT_PROP_LOCAL_SINGLE(dirties),			\
+	INIT_IDS							\
+	INIT_TRACE_IRQFLAGS						\
+	INIT_LOCKDEP							\
+}
+
+
+#define INIT_CPU_TIMERS(cpu_timers)					\
+{									\
+	LIST_HEAD_INIT(cpu_timers[0]),					\
+	LIST_HEAD_INIT(cpu_timers[1]),					\
+	LIST_HEAD_INIT(cpu_timers[2]),					\
+}
+#else /* CONFIG_SCHED_BFS */
 #define INIT_TASK(tsk)	\
 {									\
 	.state		= 0,						\
@@ -195,4 +261,5 @@ extern struct cred init_cred;
 }
 
 
+#endif /* CONFIG_SCHED_BFS */
 #endif
