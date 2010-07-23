@@ -249,7 +249,7 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
 	do {
 		times->utime = cputime_add(times->utime, t->utime);
 		times->stime = cputime_add(times->stime, t->stime);
-		times->sum_exec_runtime += t->se.sum_exec_runtime;
+		times->sum_exec_runtime += tsk_seruntime(t);
 
 		t = next_thread(t);
 	} while (t != tsk);
@@ -516,14 +516,16 @@ static void cleanup_timers(struct list_head *head,
 void posix_cpu_timers_exit(struct task_struct *tsk)
 {
 	cleanup_timers(tsk->cpu_timers,
-		       tsk->utime, tsk->stime, tsk->se.sum_exec_runtime);
+		       tsk->utime, tsk->stime, tsk_seruntime(tsk));
 
 }
 void posix_cpu_timers_exit_group(struct task_struct *tsk)
 {
 	struct task_cputime cputime;
 
+#ifndef CONFIG_SCHED_BFS
 	thread_group_cputimer(tsk, &cputime);
+#endif
 	cleanup_timers(tsk->signal->cpu_timers,
 		       cputime.utime, cputime.stime, cputime.sum_exec_runtime);
 }
@@ -1016,7 +1018,7 @@ static void check_thread_timers(struct task_struct *tsk,
 		struct cpu_timer_list *t = list_first_entry(timers,
 						      struct cpu_timer_list,
 						      entry);
-		if (!--maxfire || tsk->se.sum_exec_runtime < t->expires.sched) {
+		if (!--maxfire || tsk_seruntime(tsk) < t->expires.sched) {
 			tsk->cputime_expires.sched_exp = t->expires.sched;
 			break;
 		}
@@ -1032,7 +1034,7 @@ static void check_thread_timers(struct task_struct *tsk,
 		unsigned long *soft = &sig->rlim[RLIMIT_RTTIME].rlim_cur;
 
 		if (hard != RLIM_INFINITY &&
-		    tsk->rt.timeout > DIV_ROUND_UP(hard, USEC_PER_SEC/HZ)) {
+		    tsk_rttimeout(tsk) > DIV_ROUND_UP(hard, USEC_PER_SEC/HZ)) {
 			/*
 			 * At the hard limit, we just die.
 			 * No need to calculate anything else now.
@@ -1040,7 +1042,7 @@ static void check_thread_timers(struct task_struct *tsk,
 			__group_send_sig_info(SIGKILL, SEND_SIG_PRIV, tsk);
 			return;
 		}
-		if (tsk->rt.timeout > DIV_ROUND_UP(*soft, USEC_PER_SEC/HZ)) {
+		if (tsk_rttimeout(tsk) > DIV_ROUND_UP(*soft, USEC_PER_SEC/HZ)) {
 			/*
 			 * At the soft limit, send a SIGXCPU every second.
 			 */
@@ -1356,7 +1358,7 @@ static inline int fastpath_timer_check(struct task_struct *tsk)
 		struct task_cputime task_sample = {
 			.utime = tsk->utime,
 			.stime = tsk->stime,
-			.sum_exec_runtime = tsk->se.sum_exec_runtime
+			.sum_exec_runtime = tsk_seruntime(tsk)
 		};
 
 		if (task_cputime_expired(&task_sample, &tsk->cputime_expires))

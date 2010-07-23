@@ -8,7 +8,7 @@ usage() {
 
 cd "${1:-.}" || usage
 
-printf '%s' -flykernel-04
+printf '%s' -flykernel-06-BFS
 exit
 
 # Check for git and a git repo.
