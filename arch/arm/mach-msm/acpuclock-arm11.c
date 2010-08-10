@@ -126,6 +126,7 @@ static struct clkctl_acpu_speed msm7227_tbl[] = {
 
 /* 7200a turbo mode, PLL0(mpll):245.76, PLL1(gpll):960, PLL2(bpll0):1056 */
 static struct clkctl_acpu_speed  msm72xx_tbl[] = {
+#if defined(CONFIG_TURBO_MODE)
 	{ 19200, ACPU_PLL_TCXO, 0, 0, 19200, 0, VDD_0, 30720, 0, 0, 4 },
 	{ 122880, ACPU_PLL_0, 4, 1, 61440, 1, VDD_3, 61440, 0, 0, 4 },
 	{ 160000, ACPU_PLL_1, 1, 5, 53333, 2, VDD_3, 61440, 0, 0, 6 },
