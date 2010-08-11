@@ -319,6 +319,10 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *new_policy,
 		pm_idle_old = pm_idle;
 		pm_idle = cpufreq_idle;
 		policy = new_policy;
+
+		// start at max speed, incase no idle yet:
+	        __cpufreq_driver_target(policy, policy->max, CPUFREQ_RELATION_H);
+
 		break;
 
 	case CPUFREQ_GOV_STOP:
@@ -332,12 +336,9 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *new_policy,
 		break;
 
 	case CPUFREQ_GOV_LIMITS:
-		if (new_policy->max < new_policy->cur)
-			__cpufreq_driver_target(new_policy,
+		// start at max speed, incase no idle yet:
+	        __cpufreq_driver_target(new_policy,
 					new_policy->max, CPUFREQ_RELATION_H);
-		else if (new_policy->min > new_policy->cur)
-			__cpufreq_driver_target(new_policy,
-					new_policy->min, CPUFREQ_RELATION_L);
 		break;
 	}
 	return 0;
