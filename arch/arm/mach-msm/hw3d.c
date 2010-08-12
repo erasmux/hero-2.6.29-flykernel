@@ -645,7 +645,7 @@ static void hw3d_late_resume(struct early_suspend *h)
 }
 
 #ifndef CONFIG_MSM_HW3D_EARLYSUSPEND_ENABLED
-static void hw3d_suspend(struct platform_device *pdev)
+static void hw3d_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct hw3d_info *info = platform_get_drvdata(pdev);
 	unsigned long flags;
