@@ -146,14 +146,15 @@ void cpu_idle(void)
 
 	/* endless idle loop with no priority at all */
 	while (1) {
-		tick_nohz_stop_sched_tick(1);
-		leds_event(led_idle_start);
-		while (!need_resched()) {
 #ifdef CONFIG_HOTPLUG_CPU
-			if (cpu_is_offline(smp_processor_id()))
-				cpu_die();
+		if (cpu_is_offline(smp_processor_id())) {
+			leds_event(led_idle_start);
+			cpu_die();
+		}
 #endif
-
+		leds_event(led_idle_start);
+		tick_nohz_stop_sched_tick(1);
+		while (!need_resched()) {
 			local_irq_disable();
 			if (hlt_counter) {
 				local_irq_enable();
@@ -162,12 +163,6 @@ void cpu_idle(void)
 				stop_critical_timings();
 				pm_idle();
 				start_critical_timings();
-				/*
-				 * This will eventually be removed - pm_idle
-				 * functions should always return with IRQs
-				 * enabled.
-				 */
-				WARN_ON(irqs_disabled());
 				local_irq_enable();
 			}
 		}
