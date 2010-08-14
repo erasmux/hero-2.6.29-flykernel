@@ -34,8 +34,8 @@
  * It helps to keep variable names smaller, simpler
  */
 
-#define DEF_FREQUENCY_UP_THRESHOLD		(80)
-#define DEF_FREQUENCY_DOWN_THRESHOLD		(20)
+#define DEF_FREQUENCY_UP_THRESHOLD		(92)
+#define DEF_FREQUENCY_DOWN_THRESHOLD		(27)
 
 /*
  * The polling frequency of this governor depends on the capability of
@@ -358,6 +358,8 @@ static void dbs_check_cpu(int cpu)
 	 * 5% (default) of max_frequency
 	 */
 
+	this_dbs_info->down_skip++;
+
 	/* Check for frequency increase */
 	idle_ticks = UINT_MAX;
 
@@ -404,7 +406,6 @@ static void dbs_check_cpu(int cpu)
 	}
 
 	/* Check for frequency decrease */
-	this_dbs_info->down_skip++;
 	if (this_dbs_info->down_skip < dbs_tuners_ins.sampling_down_factor)
 		return;
 
