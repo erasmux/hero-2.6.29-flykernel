@@ -34,8 +34,8 @@
  * It helps to keep variable names smaller, simpler
  */
 
-#define DEF_FREQUENCY_UP_THRESHOLD		(92)
-#define DEF_FREQUENCY_DOWN_THRESHOLD		(27)
+#define DEF_FREQUENCY_UP_THRESHOLD		(80)
+#define DEF_FREQUENCY_DOWN_THRESHOLD		(20)
 
 /*
  * The polling frequency of this governor depends on the capability of
@@ -55,8 +55,8 @@ static unsigned int def_sampling_rate;
 #define MIN_SAMPLING_RATE			\
 			(def_sampling_rate / MIN_SAMPLING_RATE_RATIO)
 #define MAX_SAMPLING_RATE			(500 * def_sampling_rate)
-#define DEF_SAMPLING_DOWN_FACTOR		(10)
-#define MAX_SAMPLING_DOWN_FACTOR		(100)
+#define DEF_SAMPLING_DOWN_FACTOR		(1)
+#define MAX_SAMPLING_DOWN_FACTOR		(10)
 #define TRANSITION_LATENCY_LIMIT		(10 * 1000 * 1000)
 
 static void do_dbs_timer(struct work_struct *work);
@@ -98,7 +98,7 @@ static struct dbs_tuners dbs_tuners_ins = {
 	.down_threshold = DEF_FREQUENCY_DOWN_THRESHOLD,
 	.sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR,
 	.ignore_nice = 0,
-	.freq_step = 999,
+	.freq_step = 5,
 };
 
 static inline unsigned int get_cpu_idle_time(unsigned int cpu)
@@ -286,9 +286,7 @@ static ssize_t store_freq_step(struct cpufreq_policy *policy,
 	if (ret != 1)
 		return -EINVAL;
 
-	if (input >= 999)
- 		input = 999;
-	else if (input > 100)
+	if (input > 100)
 		input = 100;
 
 	/* no need to test here if freq_step is zero as the user might actually
@@ -358,8 +356,6 @@ static void dbs_check_cpu(int cpu)
 	 * 5% (default) of max_frequency
 	 */
 
-	this_dbs_info->down_skip++;
-
 	/* Check for frequency increase */
 	idle_ticks = UINT_MAX;
 
@@ -386,19 +382,15 @@ static void dbs_check_cpu(int cpu)
 		if (this_dbs_info->requested_freq == policy->max)
 			return;
 
-		if (dbs_tuners_ins.freq_step == 999)
+		freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
+
+		/* max freq cannot be less than 100. But who knows.... */
+		if (unlikely(freq_target == 0))
+			freq_target = 5;
+
+		this_dbs_info->requested_freq += freq_target;
+		if (this_dbs_info->requested_freq > policy->max)
 			this_dbs_info->requested_freq = policy->max;
-		else {
-			freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
-
-			/* max freq cannot be less than 100. But who knows.... */
-			if (unlikely(freq_target == 0))
-				freq_target = 5;
-
-			this_dbs_info->requested_freq += freq_target;
-			if (this_dbs_info->requested_freq > policy->max)
-				this_dbs_info->requested_freq = policy->max;
-		}
 
 		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 			CPUFREQ_RELATION_H);
@@ -406,6 +398,7 @@ static void dbs_check_cpu(int cpu)
 	}
 
 	/* Check for frequency decrease */
+	this_dbs_info->down_skip++;
 	if (this_dbs_info->down_skip < dbs_tuners_ins.sampling_down_factor)
 		return;
 
@@ -437,19 +430,15 @@ static void dbs_check_cpu(int cpu)
 				|| dbs_tuners_ins.freq_step == 0)
 			return;
 
-		if (dbs_tuners_ins.freq_step == 999)
+		freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
+
+		/* max freq cannot be less than 100. But who knows.... */
+		if (unlikely(freq_target == 0))
+			freq_target = 5;
+
+		this_dbs_info->requested_freq -= freq_target;
+		if (this_dbs_info->requested_freq < policy->min)
 			this_dbs_info->requested_freq = policy->min;
-		else {
-			freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
-
-			/* max freq cannot be less than 100. But who knows.... */
-			if (unlikely(freq_target == 0))
-				freq_target = 5;
-
-			this_dbs_info->requested_freq -= freq_target;
-			if (this_dbs_info->requested_freq < policy->min)
-				this_dbs_info->requested_freq = policy->min;
-		}
 
 		__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
 				CPUFREQ_RELATION_H);
