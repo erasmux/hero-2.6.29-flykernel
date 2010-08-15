@@ -193,7 +193,9 @@ static struct cpufreq_frequency_table msm72xx_freq_table[] = {
 	{ 9, 672000 },
 	{10, 691200 },
 	{11, 710400 },
-	{12, CPUFREQ_TABLE_END },
+	{12, 729600 },
+	{13, 748800 },
+	{14, CPUFREQ_TABLE_END },
 #else
 	{ 0, 19200 },
 	{ 1, 122880 },
