@@ -186,7 +186,7 @@ at the current frequency before scaling DOWN. This is done to
 more accurately determine the cpu workload and the best speed for that
 workload. The default is 50ms.
 
-2.6 MinMax
+2.7 MinMax
 ---------------
 
 The CPUfreq governor "maxmin" tries to minimize the frequency jumps by limiting
@@ -203,6 +203,7 @@ The sampling_down_factor, unlike conservative, will count the minimal number
 of samplings since the last time we saw the 'up_threshold' load on the CPU.
 Hence it is set to higher default and acts as a limiter not to do too many
 frequency jumps without hurting the performance.
+
 
 
 3. The Governor Interface in the CPUfreq Core
