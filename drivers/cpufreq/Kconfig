@@ -191,7 +191,6 @@ config CPU_FREQ_GOV_INTERACTIVE
 	 'interactive' - This driver adds a dynamic cpufreq policy governor.
 	 Designed for low latency burst workloads. Scaling it done when coming
 	 out of idle instead of polling.
-	 This is aimed at maximizing both perfomance and battery life.
 
 config CPU_FREQ_GOV_CONSERVATIVE
 	tristate "'conservative' cpufreq governor"
