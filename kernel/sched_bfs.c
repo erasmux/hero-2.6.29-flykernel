@@ -1669,6 +1669,7 @@ unsigned long nr_running(void)
 		nr = 0;
 	return (unsigned long)nr;
 }
+EXPORT_SYMBOL_GPL(nr_running);
 
 unsigned long nr_uninterruptible(void)
 {
