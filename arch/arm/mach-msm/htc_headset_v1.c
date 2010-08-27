@@ -363,7 +363,8 @@ static inline void h2w_reset(void)
 
 		udelay(hi->speed);
 		hi->set_clk(1);
-		udelay(4 * hi->speed);
+//		udelay(4 * hi->speed);
+		usleep(4 * hi->speed);
 		hi->set_dat(1);
 		udelay(hi->speed);
 		hi->set_dat(0);

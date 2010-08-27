@@ -300,7 +300,8 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev)
 		gpio_direction_input(gpio_clk);
 		udelay(5);
 		if (!gpio_get_value(gpio_clk))
-			udelay(20);
+		//	udelay(20);
+			usleep(20);
 		if (!gpio_get_value(gpio_clk))
 			msleep(10);
 		gpio_clk_status = gpio_get_value(gpio_clk);
