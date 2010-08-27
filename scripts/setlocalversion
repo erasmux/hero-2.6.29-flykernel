@@ -8,7 +8,7 @@ usage() {
 
 cd "${1:-.}" || usage
 
-printf '%s' -flykernel-10
+printf '%s' -flykernel-10a
 exit
 
 # Check for git and a git repo.
