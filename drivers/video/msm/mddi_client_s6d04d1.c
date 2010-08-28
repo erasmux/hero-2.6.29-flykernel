@@ -145,7 +145,8 @@ static int s6d04d1_unblank(struct msm_panel_data *panel_data)
 		client_data->private_client_data;
 
         if (cabc_config.bl_handle) {
-                mdelay(40);
+                //mdelay(40);
+		msleep(40);
                 cabc_config.bl_handle(&mddi_samsung_cabc, LED_FULL);
         }
 

@@ -331,12 +331,18 @@ static void hero_process_mddi_table(struct msm_mddi_client_data *client_data,
 		uint32_t reg = table[i].reg;
 		uint32_t value = table[i].value;
 
-		if (reg == 0)
-			udelay(value);
+                if (reg == 0) {
+			if (value < 20) {
+	                        udelay(value);
+			}
+			else {
+				usleep(value);
+			}
+		}
 		else if (reg == 1)
-			msleep(value);
-		else
-			client_data->remote_write(client_data, value, reg);
+                        msleep(value);
+                else
+                        client_data->remote_write(client_data, value, reg);
 	}
 }
 

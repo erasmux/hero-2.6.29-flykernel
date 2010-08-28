@@ -2722,6 +2722,7 @@ unsigned long nr_running(void)
 
 	return sum;
 }
+EXPORT_SYMBOL_GPL(nr_running);
 
 unsigned long nr_uninterruptible(void)
 {
@@ -9726,4 +9727,6 @@ struct cgroup_subsys cpuacct_subsys = {
 	.subsys_id = cpuacct_subsys_id,
 };
 #endif	/* CONFIG_CGROUP_CPUACCT */
+
 #endif /* CONFIG_SCHED_BFS */
+
