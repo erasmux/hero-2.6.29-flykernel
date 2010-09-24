@@ -2300,10 +2300,9 @@ static int do_set_config(struct fsg_dev *fsg, u8 new_config)
 			INFO(fsg, "config #%d\n", fsg->config);
 	}
 
-	if (new_config != 0 || usb_get_connect_type() != 1) {
-		switch_set_state(&fsg->sdev, new_config);
-		printk(KERN_INFO "%s: uevent = %d\n", __func__, new_config);
-	}
+	// in any case call switch to avoid problem during startup
+	switch_set_state(&fsg->sdev, new_config);
+	printk(KERN_INFO "%s: uevent = %d\n", __func__, new_config);
 
 	adjust_wake_lock(fsg);
 	return rc;
