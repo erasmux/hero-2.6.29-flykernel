@@ -26,7 +26,7 @@
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/miscdevice.h>
+#include <linux/cdev.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/msm_hw3d.h>
@@ -34,6 +34,7 @@
 #include <linux/platform_device.h>
 #include <linux/poll.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/time.h>
 #include <linux/uaccess.h>
 #include <linux/wait.h>
@@ -54,9 +55,14 @@ struct mem_region {
 	void __iomem		*vbase;
 };
 
+/* Device minor numbers for master and client */
+#define MINOR_MASTER 0
+#define MINOR_CLIENT 1
+
 struct hw3d_info {
-	struct miscdevice	master_dev;
-	struct miscdevice	client_dev;
+	dev_t devno;
+	struct cdev	master_cdev;
+	struct cdev	client_cdev;
 
 	struct clk		*grp_clk;
 	struct clk		*imem_clk;
@@ -74,6 +80,7 @@ struct hw3d_info {
 	struct timer_list	revoke_timer;
 	wait_queue_head_t	revoke_wq;
 	wait_queue_head_t	revoke_done_wq;
+	unsigned int		waiter_cnt;
 
 	spinlock_t		lock;
 
@@ -121,13 +128,13 @@ static struct vm_operations_struct hw3d_vm_ops = {
 static bool is_master(struct hw3d_info *info, struct file *file)
 {
 	int fmin = MINOR(file->f_dentry->d_inode->i_rdev);
-	return fmin == info->master_dev.minor;
+	return fmin == MINOR(info->master_cdev.dev);
 }
 
 static bool is_client(struct hw3d_info *info, struct file *file)
 {
 	int fmin = MINOR(file->f_dentry->d_inode->i_rdev);
-	return fmin == info->client_dev.minor;
+	return fmin == MINOR(info->client_cdev.dev);
 }
 
 inline static void locked_hw3d_irq_disable(struct hw3d_info *info)
@@ -266,7 +273,7 @@ static void do_force_revoke(struct hw3d_info *info)
 	spin_unlock_irqrestore(&info->lock, flags);
 }
 
-#define REVOKE_TIMEOUT		(HZ / 2)
+#define REVOKE_TIMEOUT		(2 * HZ)
 static void locked_hw3d_revoke(struct hw3d_info *info)
 {
 	/* force us to wait to suspend until the revoke is done. If the
@@ -281,7 +288,7 @@ static void locked_hw3d_revoke(struct hw3d_info *info)
 bool is_msm_hw3d_file(struct file *file)
 {
 	struct hw3d_info *info = hw3d_info;
-	if (MAJOR(file->f_dentry->d_inode->i_rdev) == MISC_MAJOR &&
+	if (MAJOR(file->f_dentry->d_inode->i_rdev) == MAJOR(info->devno) &&
 	    (is_master(info, file) || is_client(info, file)))
 		return 1;
 	return 0;
@@ -370,6 +377,64 @@ static int hw3d_flush(struct file *filp, fl_owner_t id)
 	return 0;
 }
 
+static int should_wakeup(struct hw3d_info *info, unsigned int cnt)
+{
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&info->lock, flags);
+	ret = (cnt != info->waiter_cnt) ||
+		(!info->suspending && !info->client_file);
+	spin_unlock_irqrestore(&info->lock, flags);
+
+	return ret;
+}
+
+static int locked_open_wait_for_gpu(struct hw3d_info *info,
+				    unsigned long *flags)
+{
+	unsigned int my_cnt;
+	int ret;
+
+	my_cnt = ++info->waiter_cnt;
+	pr_debug("%s: wait_for_open %d\n", __func__, my_cnt);
+
+	/* in case there are other waiters, wake and release them. */
+	wake_up(&info->revoke_done_wq);
+
+	if (info->suspending)
+		pr_info("%s: suspended, waiting (%d %d)\n", __func__,
+			current->group_leader->pid, current->pid);
+	if (info->client_file)
+		pr_info("%s: has client, waiting (%d %d)\n", __func__,
+			current->group_leader->pid, current->pid);
+	spin_unlock_irqrestore(&info->lock, *flags);
+
+	ret = wait_event_interruptible(info->revoke_done_wq,
+				       should_wakeup(info, my_cnt));
+
+	spin_lock_irqsave(&info->lock, *flags);
+	pr_debug("%s: woke up (%d %d %p)\n", __func__,
+		 info->waiter_cnt, info->suspending, info->client_file);
+
+	if (ret >= 0) {
+		if (my_cnt != info->waiter_cnt) {
+			pr_info("%s: someone else asked for gpu after us %d:%d"
+				"(%d %d)\n", __func__,
+				current->group_leader->pid, current->pid,
+				my_cnt, info->waiter_cnt);
+			ret = -EBUSY;
+		} else if (info->suspending || info->client_file) {
+			pr_err("%s: couldn't get the gpu for %d:%d (%d %p)\n",
+			       __func__, current->group_leader->pid,
+			       current->pid, info->suspending,
+			       info->client_file);
+			ret = -EBUSY;
+		} else
+			ret = 0;
+	}
+	return ret;
+}
 
 static int hw3d_open(struct inode *inode, struct file *file)
 {
@@ -400,31 +465,18 @@ static int hw3d_open(struct inode *inode, struct file *file)
 		return 0;
 
 	spin_lock_irqsave(&info->lock, flags);
-	if (info->suspending) {
-		pr_warning("%s: can't open hw3d while suspending\n", __func__);
-		ret = -EPERM;
-		spin_unlock_irqrestore(&info->lock, flags);
-		goto err;
-	}
-
 	if (info->client_file) {
 		pr_debug("hw3d: have client_file, need revoke\n");
 		locked_hw3d_revoke(info);
-		spin_unlock_irqrestore(&info->lock, flags);
-		ret = wait_event_interruptible(info->revoke_done_wq,
-					       !info->client_file);
-		if (ret < 0)
-			goto err;
-		spin_lock_irqsave(&info->lock, flags);
-		if (info->client_file) {
-			/* between is waking up and grabbing the lock,
-			 * someone else tried to open the gpu, and got here
-			 * first, let them have it. */
-			spin_unlock_irqrestore(&info->lock, flags);
-			ret = -EBUSY;
-			goto err;
-		}
 	}
+
+	ret = locked_open_wait_for_gpu(info, &flags);
+	if (ret < 0) {
+		spin_unlock_irqrestore(&info->lock, flags);
+		goto err;
+	}
+	pr_info("%s: pid %d tid %d got gpu\n", __func__,
+		current->group_leader->pid, current->pid);
 
 	info->client_file = file;
 	get_task_struct(current->group_leader);
@@ -532,6 +584,11 @@ static int hw3d_mmap(struct file *file, struct vm_area_struct *vma)
 		pr_err("%s: Trying to mmap unknown region %d\n", __func__,
 		       region);
 		return -EINVAL;
+	} else if (vma_size > info->regions[region].size) {
+		pr_err("%s: VMA size %ld exceeds region %d size %ld\n",
+			__func__, vma_size, region,
+			info->regions[region].size);
+		return -EINVAL;
 	} else if (REGION_PAGE_OFFS(vma->vm_pgoff) != 0 ||
 		   (vma_size & ~PAGE_MASK)) {
 		pr_err("%s: Can't remap part of the region %d\n", __func__,
@@ -572,6 +629,13 @@ static int hw3d_mmap(struct file *file, struct vm_area_struct *vma)
 		ret = -EAGAIN;
 		goto done;
 	}
+
+	/* Prevent a malicious client from stealing another client's data
+	 * by forcing a revoke on it and then mmapping the GPU buffers.
+	 */
+	if (region != HW3D_REGS)
+		memset(info->regions[region].vbase, 0,
+		       info->regions[region].size);
 
 	vma->vm_ops = &hw3d_vm_ops;
 
@@ -641,25 +705,9 @@ static void hw3d_late_resume(struct early_suspend *h)
 	if (info->suspending)
 		pr_info("%s: resuming\n", __func__);
 	info->suspending = 0;
+	wake_up(&info->revoke_done_wq);
 	spin_unlock_irqrestore(&info->lock, flags);
 }
-
-#ifndef CONFIG_MSM_HW3D_EARLYSUSPEND_ENABLED
-static void hw3d_suspend(struct platform_device *pdev, pm_message_t state)
-{
-	struct hw3d_info *info = platform_get_drvdata(pdev);
-	unsigned long flags;
-
-	spin_lock_irqsave(&info->lock, flags);
-	info->suspending = 1;
-	if (info->client_file) {
-		pr_info("%s: suspending\n", __func__);
-		locked_hw3d_revoke(info);
-	}
-	spin_unlock_irqrestore(&info->lock, flags);
-	return 0;
-}
-#endif
 
 static int hw3d_resume(struct platform_device *pdev)
 {
@@ -677,6 +725,11 @@ static int hw3d_resume(struct platform_device *pdev)
 static int __init hw3d_probe(struct platform_device *pdev)
 {
 	struct hw3d_info *info;
+#define DEV_MASTER MKDEV(MAJOR(info->devno), MINOR_MASTER)
+#define DEV_CLIENT MKDEV(MAJOR(info->devno), MINOR_CLIENT)
+	struct class *hw3d_class;
+	struct device *master_dev;
+	struct device *client_dev;
 	struct resource *res[HW3D_NUM_REGIONS];
 	int i;
 	int irq;
@@ -738,33 +791,43 @@ static int __init hw3d_probe(struct platform_device *pdev)
 		}
 	}
 
+	hw3d_class = class_create(THIS_MODULE, "msm_hw3d");
+	if (IS_ERR(hw3d_class))
+		goto err_fail_create_class;
+
+	ret = alloc_chrdev_region(&info->devno, 0, 2, "msm_hw3d");
+	if (ret < 0)
+		goto err_fail_alloc_region;
+
 	/* register the master/client devices */
-	info->master_dev.name = "msm_hw3dm";
-	info->master_dev.minor = MISC_DYNAMIC_MINOR;
-	info->master_dev.fops = &hw3d_fops;
-	info->master_dev.parent = &pdev->dev;
-	ret = misc_register(&info->master_dev);
-	if (ret) {
+	master_dev = device_create(hw3d_class, &pdev->dev,
+			DEV_MASTER, "%s", "msm_hw3dm");
+	if (IS_ERR(master_dev))
+		goto err_dev_master;
+	cdev_init(&info->master_cdev, &hw3d_fops);
+	info->master_cdev.owner = THIS_MODULE;
+	ret = cdev_add(&info->master_cdev, DEV_MASTER, 1);
+	if (ret < 0) {
 		pr_err("%s: Cannot register master device node\n", __func__);
-		goto err_misc_reg_master;
+		goto err_reg_master;
 	}
 
-	info->client_dev.name = "msm_hw3dc";
-	info->client_dev.minor = MISC_DYNAMIC_MINOR;
-	info->client_dev.fops = &hw3d_fops;
-	info->client_dev.parent = &pdev->dev;
-	ret = misc_register(&info->client_dev);
-	if (ret) {
+	client_dev = device_create(hw3d_class, &pdev->dev,
+			DEV_CLIENT, "%s", "msm_hw3dc");
+	if (IS_ERR(client_dev))
+		goto err_dev_client;
+	cdev_init(&info->client_cdev, &hw3d_fops);
+	info->client_cdev.owner = THIS_MODULE;
+	ret = cdev_add(&info->client_cdev, DEV_CLIENT, 1);
+	if (ret < 0) {
 		pr_err("%s: Cannot register client device node\n", __func__);
-		goto err_misc_reg_client;
+		goto err_reg_client;
 	}
 
-#ifdef CONFIG_MSM_HW3D_EARLYSUSPEND_ENABLED
 	info->early_suspend.suspend = hw3d_early_suspend;
 	info->early_suspend.resume = hw3d_late_resume;
 	info->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB;
 	register_early_suspend(&info->early_suspend);
-#endif
 
 	info->irq_en = 1;
 	ret = request_irq(info->irq, hw3d_irq_handler, IRQF_TRIGGER_HIGH,
@@ -781,10 +844,18 @@ static int __init hw3d_probe(struct platform_device *pdev)
 
 err_req_irq:
 	unregister_early_suspend(&info->early_suspend);
-	misc_deregister(&info->client_dev);
-err_misc_reg_client:
-	misc_deregister(&info->master_dev);
-err_misc_reg_master:
+	cdev_del(&info->client_cdev);
+err_reg_client:
+	device_destroy(hw3d_class, DEV_CLIENT);
+err_dev_client:
+	cdev_del(&info->master_cdev);
+err_reg_master:
+	device_destroy(hw3d_class, DEV_MASTER);
+err_dev_master:
+	unregister_chrdev_region(info->devno, 2);
+err_fail_alloc_region:
+	class_unregister(hw3d_class);
+err_fail_create_class:
 err_remap_region:
 	for (i = 0; i < HW3D_NUM_REGIONS; ++i)
 		if (info->regions[i].vbase != 0)
@@ -804,9 +875,6 @@ err_alloc:
 static struct platform_driver msm_hw3d_driver = {
 	.probe		= hw3d_probe,
 	.resume		= hw3d_resume,
-#ifndef CONFIG_MSM_HW3D_EARLYSUSPEND_ENABLED
-	.suspend         = hw3d_suspend,
-#endif
 	.driver		= {
 		.name = "msm_hw3d",
 		.owner = THIS_MODULE,
