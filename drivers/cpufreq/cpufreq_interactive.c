@@ -19,8 +19,6 @@
  * EXPORT_SYMBOL_GPL(nr_running);
  * at the end of kernel/sched.c
  *
- * Added min/max_cpu_load parameters: erasmux
- *
  */
 
 #include <linux/cpu.h>
@@ -56,23 +54,11 @@ static u64 freq_change_time_in_idle;
 static cpumask_t work_cpumask;
 
 /*
- * The minimum amount of time to spend at a frequency before we can ramp down,
- * default is 45ms.
+ * The minimum ammount of time to spend at a frequency before we can ramp down,
+ * default is 50ms.
  */
-#define DEFAULT_MIN_SAMPLE_TIME 45000;
+#define DEFAULT_MIN_SAMPLE_TIME 50000;
 static unsigned long min_sample_time;
-
-/*
- * CPU freq will be increased if measured load > max_cpu_load;
- */
-#define DEFAULT_MAX_CPU_LOAD 80
-static unsigned long max_cpu_load;
-
-/*
- * CPU freq will be decreased if measured load < min_cpu_load;
- */
-#define DEFAULT_MIN_CPU_LOAD 30
-static unsigned long min_cpu_load;
 
 static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		unsigned int event);
@@ -83,7 +69,7 @@ static
 struct cpufreq_governor cpufreq_gov_interactive = {
 	.name = "interactive",
 	.governor = cpufreq_governor_interactive,
-	.max_transition_latency = 9000000,
+	.max_transition_latency = 10000000,
 	.owner = THIS_MODULE,
 };
 
@@ -191,12 +177,10 @@ static unsigned int cpufreq_interactive_calc_freq(unsigned int cpu)
 	delta_time = (unsigned int) current_wall_time - freq_change_time;
 
 	cpu_load = 100 * (delta_time - idle_time) / delta_time;
-	if (cpu_load < min_cpu_load)
-	  return policy->cur * cpu_load / 100;
-	if (cpu_load > max_cpu_load)
-	  return policy->cur / max_cpu_load;
-	return policy->cur;
+
+	return policy->cur * cpu_load / 100;
 }
+
 
 /* We use the same work function to sale up and down */
 static void cpufreq_interactive_freq_change_time_work(struct work_struct *work)
@@ -214,13 +198,8 @@ static void cpufreq_interactive_freq_change_time_work(struct work_struct *work)
 					CPUFREQ_RELATION_H);
 		} else {
 			target_freq = cpufreq_interactive_calc_freq(cpu);
-			if (target_freq > policy->cur)
-			  __cpufreq_driver_target(policy, target_freq,
-						  CPUFREQ_RELATION_H);
-			else if (target_freq < policy->cur)
-			  __cpufreq_driver_target(policy, target_freq,
-						  CPUFREQ_RELATION_L);
-
+			__cpufreq_driver_target(policy, target_freq,
+							CPUFREQ_RELATION_L);
 		}
 		freq_change_time_in_idle = get_cpu_idle_time_us(cpu,
 							&freq_change_time);
@@ -238,57 +217,14 @@ static ssize_t show_min_sample_time(struct cpufreq_policy *policy, char *buf)
 
 static ssize_t store_min_sample_time(struct cpufreq_policy *policy, const char *buf, size_t count)
 {
-        ssize_t res;
-	unsigned long input;
-	res = strict_strtoul(buf, 0, &input);
-	if (res >= 0 && input >= 1000 && input <= 100000000)
-	  min_sample_time = input;
-	return res;
+	return strict_strtoul(buf, 0, &min_sample_time);
 }
 
 static struct freq_attr min_sample_time_attr = __ATTR(min_sample_time, 0644,
 		show_min_sample_time, store_min_sample_time);
 
-static ssize_t show_max_cpu_load(struct cpufreq_policy *policy, char *buf)
-{
-	return sprintf(buf, "%lu\n", max_cpu_load);
-}
-
-static ssize_t store_max_cpu_load(struct cpufreq_policy *policy, const char *buf, size_t count)
-{
-        ssize_t res;
-	unsigned long input;
-	res = strict_strtoul(buf, 0, &input);
-	if (res >= 0 && input > 0 && input <= 100)
-	  max_cpu_load = input;
-	return res;
-}
-
-static struct freq_attr max_cpu_load_attr = __ATTR(max_cpu_load, 0644,
-		show_max_cpu_load, store_max_cpu_load);
-
-static ssize_t show_min_cpu_load(struct cpufreq_policy *policy, char *buf)
-{
-	return sprintf(buf, "%lu\n", min_cpu_load);
-}
-
-static ssize_t store_min_cpu_load(struct cpufreq_policy *policy, const char *buf, size_t count)
-{
-        ssize_t res;
-	unsigned long input;
-	res = strict_strtoul(buf, 0, &input);
-	if (res >= 0 && input > 0 && input < 100)
-	  min_cpu_load = input;
-	return res;
-}
-
-static struct freq_attr min_cpu_load_attr = __ATTR(min_cpu_load, 0644,
-		show_min_cpu_load, store_min_cpu_load);
-
 static struct attribute * interactive_attributes[] = {
 	&min_sample_time_attr.attr,
-	&max_cpu_load_attr.attr,
-	&min_cpu_load_attr.attr,
 	NULL,
 };
 
@@ -349,8 +285,6 @@ static int __init cpufreq_interactive_init(void)
 	unsigned int i;
 	struct timer_list *t;
 	min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
-	max_cpu_load = DEFAULT_MAX_CPU_LOAD;
-	min_cpu_load = DEFAULT_MIN_CPU_LOAD;
 
 	/* Initalize per-cpu timers */
 	for_each_possible_cpu(i) {
