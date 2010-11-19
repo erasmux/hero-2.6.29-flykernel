@@ -872,7 +872,6 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	acct_init_pacct(&sig->pacct);
 
 	tty_audit_fork(sig);
-	sched_autogroup_fork(sig);
 
 	sig->oom_adj = current->signal->oom_adj;
 
@@ -892,10 +891,8 @@ static void cleanup_signal(struct task_struct *tsk)
 
 	atomic_dec(&sig->live);
 
-	if (atomic_dec_and_test(&sig->count)) {
-		sched_autogroup_exit(sig);
+	if (atomic_dec_and_test(&sig->count))
 		__cleanup_signal(sig);
-        }
 }
 
 static void copy_flags(unsigned long clone_flags, struct task_struct *p)
