@@ -89,6 +89,14 @@ static unsigned int sleep_max_freq;
 static unsigned int sleep_wakeup_freq;
 
 /*
+ * When awake_min_freq>0 the frequency when not suspended will not
+ * go below this frequency.
+ * Set awake_min_freq=0 to disable this behavior.
+ */
+#define DEFAULT_AWAKE_MIN_FREQ 480000
+static unsigned int awake_min_freq;
+
+/*
  * Sampling rate, I highly recommend to leave it at 2.
  */
 #define DEFAULT_SAMPLE_RATE_JIFFIES 2
@@ -288,6 +296,10 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 			if (suspended && sleep_max_freq &&
 			    (new_freq > sleep_max_freq || new_freq > policy->cur))
 				new_freq = sleep_max_freq;
+
+                        // when awak limit min frequecy according to awake_min_freq:
+                        if (!suspended && awake_min_freq && new_freq < awake_min_freq)
+                        	new_freq = awake_min_freq;
 		}
 
 		if (new_freq > policy->max)
@@ -379,6 +391,24 @@ static ssize_t store_sleep_wakeup_freq(struct cpufreq_policy *policy, const char
 
 static struct freq_attr sleep_wakeup_freq_attr = __ATTR(sleep_wakeup_freq, 0644,
 		show_sleep_wakeup_freq, store_sleep_wakeup_freq);
+
+static ssize_t show_awake_min_freq(struct cpufreq_policy *policy, char *buf)
+{
+	return sprintf(buf, "%u\n", awake_min_freq);
+}
+
+static ssize_t store_awake_min_freq(struct cpufreq_policy *policy, const char *buf, size_t count)
+{
+        ssize_t res;
+	unsigned long input;
+	res = strict_strtoul(buf, 0, &input);
+	if (res >= 0 && input >= 0)
+	  awake_min_freq = input;
+	return res;
+}
+
+static struct freq_attr awake_min_freq_attr = __ATTR(awake_min_freq, 0644,
+		show_awake_min_freq, store_awake_min_freq);
 
 static ssize_t show_sample_rate_jiffies(struct cpufreq_policy *policy, char *buf)
 {
@@ -475,6 +505,7 @@ static struct attribute * smartass_attributes[] = {
 	&up_min_freq_attr.attr,
 	&sleep_max_freq_attr.attr,
         &sleep_wakeup_freq_attr.attr,
+        &awake_min_freq_attr.attr,
 	&sample_rate_jiffies_attr.attr,
 	&ramp_up_step_attr.attr,
 	&max_ramp_down_attr.attr,
@@ -597,6 +628,7 @@ static int __init cpufreq_smartass_init(void)
 	up_min_freq = DEFAULT_UP_MIN_FREQ;
 	sleep_max_freq = DEFAULT_SLEEP_MAX_FREQ;
         sleep_wakeup_freq = DEFAULT_SLEEP_WAKEUP_FREQ;
+        awake_min_freq = DEFAULT_AWAKE_MIN_FREQ;
 	sample_rate_jiffies = DEFAULT_SAMPLE_RATE_JIFFIES;
 	ramp_up_step = DEFAULT_RAMP_UP_STEP;
 	max_ramp_down = DEFAULT_MAX_RAMP_DOWN;
