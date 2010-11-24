@@ -66,6 +66,7 @@ static int lowmem_minfile_size = 6;
 
 static int ignore_lowmem_deathpending;
 static struct task_struct *lowmem_deathpending;
+static unsigned long lowmem_deathpending_timeout;
 
 static uint32_t lowmem_check_filepages = 0;
 
@@ -155,13 +156,9 @@ static int lowmem_shrink(int nr_to_scan, gfp_t gfp_mask)
 	 * this pass.
 	 *
 	 */
-	if (lowmem_deathpending) {
-		dump_deathpending(lowmem_deathpending);
-		if (lowmem_deathpending_retries++ < lowmem_max_deathpending_retries)
-			return 0;
-		else
-			task_free_unregister(&task_nb);
-	}
+	if (lowmem_deathpending &&
+	    time_before_eq(jiffies, lowmem_deathpending_timeout))
+		return 0;
 
 	if (lowmem_adj_size < array_size)
 		array_size = lowmem_adj_size;
@@ -239,6 +236,7 @@ static int lowmem_shrink(int nr_to_scan, gfp_t gfp_mask)
 			     selected->pid, selected->comm,
 			     selected_oom_adj, selected_tasksize);
 		lowmem_deathpending = selected;
+		lowmem_deathpending_timeout = jiffies + HZ;
 		force_sig(SIGKILL, selected);
 		rem -= selected_tasksize;
 	}
