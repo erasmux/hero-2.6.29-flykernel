@@ -5,6 +5,8 @@
 #ifndef __ASM__ARCH_CAMERA_H
 #define __ASM__ARCH_CAMERA_H
 
+#define CONFIG_MSM_CAMERA_LEGACY
+
 #include <linux/list.h>
 #include <linux/poll.h>
 #include <linux/cdev.h>
@@ -13,7 +15,11 @@
 #include "linux/types.h"
 
 #include <mach/board.h>
+#ifdef CONFIG_MSM_CAMERA_LEGACY
 #include <media/msm_camera.h>
+#else
+#include <media/msm_camera-7x30.h>
+#endif
 
 #ifdef CONFIG_MSM_CAMERA_DEBUG
 #define CDBG(fmt, args...) printk(KERN_INFO "msm_camera: " fmt, ##args)
@@ -40,6 +46,7 @@ enum vfe_resp_msg {
 	VFE_EVENT,
 	VFE_MSG_GENERAL,
 	VFE_MSG_SNAPSHOT,
+#ifdef CONFIG_MSM_CAMERA_LEGACY
 #ifndef CONFIG_720P_CAMERA
 	VFE_MSG_OUTPUT1,
 	VFE_MSG_OUTPUT2,
@@ -51,7 +58,27 @@ enum vfe_resp_msg {
 #endif
 	VFE_MSG_STATS_AF,
 	VFE_MSG_STATS_WE,
+#else /* CONFIG_MSM_CAMERA_7X30 */
+	VFE_MSG_OUTPUT_P,   /* preview (continuous mode ) */
+	VFE_MSG_OUTPUT_T,   /* thumbnail (snapshot mode )*/
+	VFE_MSG_OUTPUT_S,   /* main image (snapshot mode )*/
+	VFE_MSG_OUTPUT_V,   /* video   (continuous mode ) */
+	VFE_MSG_STATS_AEC,
+	VFE_MSG_STATS_AF,
+	VFE_MSG_STATS_AWB,
+	VFE_MSG_STATS_RS,
+	VFE_MSG_STATS_CS,
+	VFE_MSG_STATS_IHIST,
+	VFE_MSG_STATS_SKIN,
+	VFE_MSG_STATS_WE, /* AEC + AWB */
+#endif
+
+
 };
+
+#define VFE31_OUTPUT_MODE_PT (0x1 << 0)
+#define VFE31_OUTPUT_MODE_S (0x1 << 1)
+#define VFE31_OUTPUT_MODE_V (0x1 << 2)
 
 struct msm_vfe_phy_info {
 	uint32_t sbuf_phy;
@@ -89,6 +116,7 @@ struct msm_sensor_ctrl {
 	int (*s_init)(struct msm_camera_sensor_info *);
 	int (*s_release)(void);
 	int (*s_config)(void __user *);
+	int node;
 };
 
 /* this structure is used in kernel */
@@ -100,6 +128,7 @@ struct msm_queue_cmd {
 	enum msm_queue type;
 	void *command;
 	int on_heap;
+	struct timespec ts;
 };
 
 struct msm_device_queue {
@@ -136,6 +165,7 @@ struct msm_sync {
 	 * interrupt context, and by the control thread.
 	 */
 	struct msm_device_queue pict_q;
+	int get_pic_abort;
 
 	struct msm_camera_sensor_info *sdata;
 	struct msm_camvfe_fn vfefn;
@@ -197,7 +227,9 @@ struct register_address_value_pair {
 struct msm_pmem_region {
 	struct hlist_node list;
 	unsigned long paddr;
+//#ifdef CONFIG_MSM_CAMERA_LEGACY
 	unsigned long kvaddr;
+//#endif
 	unsigned long len;
 	struct file *file;
 	struct msm_pmem_info info;
@@ -206,13 +238,25 @@ struct msm_pmem_region {
 struct axidata {
 	uint32_t bufnum1;
 	uint32_t bufnum2;
-#ifdef CONFIG_720P_CAMERA
+//#ifdef CONFIG_720P_CAMERA
 	uint32_t bufnum3;
-#endif
+//#endif
 	struct msm_pmem_region *region;
 };
 
-#ifdef CONFIG_MSM_CAMERA_V4L2
+#ifdef CONFIG_MSM_CAMERA_FLASH
+	int msm_camera_flash_set_led_state(
+		struct msm_camera_sensor_flash_data *fdata,
+		unsigned led_state);
+#else
+	static inline int msm_camera_flash_set_led_state(
+		struct msm_camera_sensor_flash_data *fdata,
+		unsigned led_state)
+	{
+		return -ENOTSUPP;
+	}
+#endif
+
 /* Below functions are added for V4L2 kernel APIs */
 struct msm_v4l2_driver {
 	struct msm_sync *sync;
@@ -229,7 +273,6 @@ struct msm_v4l2_driver {
 
 int msm_v4l2_register(struct msm_v4l2_driver *);
 int msm_v4l2_unregister(struct msm_v4l2_driver *);
-#endif
 
 void msm_camvfe_init(void);
 int msm_camvfe_check(void *);
@@ -243,6 +286,16 @@ enum msm_camio_clk_type {
 	CAMIO_MDC_CLK,
 	CAMIO_VFE_CLK,
 	CAMIO_VFE_AXI_CLK,
+//#ifdef CONFIG_MSM_CAMERA_7X30
+	CAMIO_VFE_CLK_FOR_MIPI_2_LANE,
+	CAMIO_VFE_CAMIF_CLK,
+	CAMIO_VFE_PBDG_CLK,
+	CAMIO_CAM_MCLK_CLK,
+	CAMIO_CAMIF_PAD_PBDG_CLK,
+	CAMIO_CSI_CLK,
+	CAMIO_CSI_VFE_CLK,
+	CAMIO_CSI_PCLK,
+//#endif
 	CAMIO_MAX_CLK
 };
 
@@ -298,4 +351,22 @@ void msm_camio_clk_sel(enum msm_camio_clk_src_type);
 void msm_camio_disable(struct platform_device *);
 int msm_camio_probe_on(struct platform_device *);
 int msm_camio_probe_off(struct platform_device *);
+
+#ifdef CONFIG_MSM_CAMERA_7X30
+void msm_camio_clk_rate_set_2(struct clk *clk, int rate);
+void msm_disable_io_gpio_clk(struct platform_device *);
+int msm_camio_csi_config(struct msm_camera_csi_params *csi_params);
+int request_axi_qos(uint32_t freq);
+int update_axi_qos(uint32_t freq);
+void release_axi_qos(void);
+int msm_camio_read_camif_status(void);
+
+void msm_io_w(u32 data, void __iomem *addr);
+void msm_io_w_mb(u32 data, void __iomem *addr);
+u32 msm_io_r(void __iomem *addr);
+u32 msm_io_r_mb(void __iomem *addr);
+void msm_io_dump(void __iomem *addr, int size);
+void msm_io_memcpy(void __iomem *dest_addr, void __iomem *src_addr, u32 len);
+#endif
+
 #endif

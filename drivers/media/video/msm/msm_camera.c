@@ -129,12 +129,13 @@ static void msm_enqueue(struct msm_device_queue *queue,
 		__q->len--;					\
 		qcmd = list_first_entry(&__q->list,		\
 				struct msm_queue_cmd, member);	\
-		list_del_init(&qcmd->member);			\
+                if (qcmd) {                                     \
+                        list_del_init(&qcmd->member);           \
+                }                                               \
 	}							\
 	spin_unlock_irqrestore(&__q->lock, flags);		\
 	qcmd;											\
 })
-
 
 #define msm_queue_drain(queue, member) do {			\
 	unsigned long flags;							\
@@ -265,7 +266,7 @@ static uint8_t msm_pmem_region_lookup(struct hlist_head *ptype,
 	uint8_t rc = 0;
 
 	regptr = reg;
-
+	mutex_lock(&hlist_mut);
 	hlist_for_each_entry_safe(region, node, n, ptype, list) {
 		if (region->info.type == pmem_type &&
 			region->info.vfe_can_write) {
@@ -276,7 +277,7 @@ static uint8_t msm_pmem_region_lookup(struct hlist_head *ptype,
 				regptr++;
 		}
 	}
-
+	mutex_unlock(&hlist_mut);
 	return rc;
 }
 
@@ -317,7 +318,7 @@ static unsigned long msm_pmem_stats_ptov_lookup(struct msm_sync *sync,
 			return (unsigned long)(region->info.vaddr);
 		}
 	}
-#if 0
+#if 1
 	printk("msm_pmem_stats_ptov_lookup: lookup vaddr..\n");
 	hlist_for_each_entry_safe(region, node, n, &sync->pmem_stats, list) {
 		if (addr == (unsigned long)(region->info.vaddr)) {
@@ -450,7 +451,9 @@ static int __msm_get_frame(struct msm_sync *sync,
 	struct msm_vfe_resp *vdata;
 	struct msm_vfe_phy_info *pphy;
 
-	qcmd = msm_dequeue(&sync->frame_q, list_frame);
+	if (&sync->frame_q) {
+		qcmd = msm_dequeue(&sync->frame_q, list_frame);
+	}
 
 	if (!qcmd) {
 		pr_err("%s: no preview frame.\n", __func__);
@@ -479,7 +482,7 @@ static int __msm_get_frame(struct msm_sync *sync,
 	frame->y_off = region->info.y_off;
 	frame->cbcr_off = region->info.cbcr_off;
 	frame->fd = region->info.fd;
-/*	frame->path = vdata->phy.output_id;*/
+	frame->path = vdata->phy.output_id;
 	CDBG("%s: y %x, cbcr %x, qcmd %x, virt_addr %x\n",
 		__func__,
 		pphy->y_phy, pphy->cbcr_phy, (int) qcmd, (int) frame->buffer);
@@ -983,6 +986,7 @@ static int msm_get_stats(struct msm_sync *sync, void __user *arg)
 		se.ctrl_cmd.length = ctrl->length;
 		se.ctrl_cmd.resp_fd = ctrl->resp_fd;
 		break;
+
 
 #ifdef CONFIG_MSM_CAMERA_V4L2
 	case MSM_CAM_Q_V4L2_REQ:
@@ -2719,7 +2723,7 @@ EXPORT_SYMBOL(msm_v4l2_unregister);
 static int msm_sync_init(struct msm_sync *sync,
 		struct platform_device *pdev,
 		int (*sensor_probe)(struct msm_camera_sensor_info *,
-				struct msm_sensor_ctrl *))
+				struct msm_sensor_ctrl *), int camera_node)
 {
 	int rc = 0;
 	struct msm_sensor_ctrl sctrl;
@@ -2735,6 +2739,8 @@ static int msm_sync_init(struct msm_sync *sync,
 	rc = msm_camio_probe_on(pdev);
 	if (rc < 0)
 		return rc;
+	sctrl.node = camera_node;
+	pr_info("sctrl.node %d\n", sctrl.node);
 	rc = sensor_probe(sync->sdata, &sctrl);
 	if (rc >= 0) {
 		sync->pdev = pdev;
@@ -2816,7 +2822,7 @@ int msm_camera_drv_start(struct platform_device *dev,
 	struct msm_device *pmsm = NULL;
 	struct msm_sync *sync;
 	int rc = -ENODEV;
-	static int camera_node;
+	static int camera_node = 0;
 
 	if (camera_node >= MSM_MAX_CAMERA_SENSORS) {
 		pr_err("%s: too many camera sensors\n", __func__);
@@ -2849,7 +2855,7 @@ int msm_camera_drv_start(struct platform_device *dev,
 		return -ENOMEM;
 	sync = (struct msm_sync *)(pmsm + 3);
 
-	rc = msm_sync_init(sync, dev, sensor_probe);
+	rc = msm_sync_init(sync, dev, sensor_probe, camera_node);
 	if (rc < 0) {
 		kfree(pmsm);
 		return rc;
