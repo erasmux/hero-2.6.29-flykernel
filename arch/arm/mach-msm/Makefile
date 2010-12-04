@@ -159,6 +159,8 @@ obj-$(CONFIG_HTC_PWRSINK) += htc_pwrsink.o
 # obj-$(CONFIG_HTC_HEADSET) += htc_headset.o
 # obj-$(CONFIG_HTC_35MM_JACK) += htc_35mm_jack.o
 
+obj-$(CONFIG_TROUT_WIFI) += msm_wifi.o
+
 obj-$(CONFIG_HTC_HEADSET_V1) += htc_headset_v1.o
 obj-$(CONFIG_HTC_35MM_REMOTE_V1) += htc_35mm_remote_v1.o
 obj-$(CONFIG_HTC_AUDIOJACK_V1) += htc_audio_jack_v1.o

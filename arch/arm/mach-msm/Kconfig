@@ -358,6 +358,11 @@ config TROUT_BATTCHG_DOCK
 	default n
 	bool "Trout battery / charger driver"
 
+config TROUT_WIFI
+	depends on ARCH_MSM
+	default m
+	tristate "Trout Wifi Gpio driver (rfkill)"
+
 config HTC_BATTCHG
 	depends on MSM_ONCRPCROUTER && POWER_SUPPLY
 	default n

@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.29.6
-# Mon Nov 22 12:19:38 2010
+# Linux kernel version: 2.6.29
+# Sat Dec  4 20:02:42 2010
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -212,6 +212,7 @@ CONFIG_MACH_HERO=y
 # CONFIG_MACH_HEROC is not set
 # CONFIG_TROUT_BATTCHG is not set
 # CONFIG_TROUT_BATTCHG_DOCK is not set
+# CONFIG_TROUT_WIFI is not set
 CONFIG_HTC_BATTCHG=y
 CONFIG_HTC_BATTCHG_SMEM=y
 CONFIG_HTC_PWRSINK=y
