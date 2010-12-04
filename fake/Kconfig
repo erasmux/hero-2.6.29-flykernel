@@ -1,0 +1,15 @@
+
+menuconfig FAKE
+	tristate "fake modules"
+	default m
+if FAKE
+
+config FAKE_SDIO
+	tristate "fake SDIO"
+	default m
+
+config FAKE_TIAP
+	tristate "fake TIAP driver"
+	default m
+
+endif # FAKE
