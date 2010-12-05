@@ -94,4 +94,7 @@ source "drivers/staging/epl/Kconfig"
 source "drivers/staging/android/Kconfig"
 
 endif # !STAGING_EXCLUDE_BUILD
+
+source "drivers/staging/ramzswap/Kconfig"
+
 endif # STAGING
