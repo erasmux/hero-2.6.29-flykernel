@@ -47,8 +47,8 @@ struct smartass_info_s {
         int cur_cpu_load;
         unsigned int force_ramp_up;
         unsigned int enable;
-        unsigned int max_speed;
-        unsigned int min_speed;
+        int max_speed;
+        int min_speed;
 };
 static DEFINE_PER_CPU(struct smartass_info_s, smartass_info);
 
@@ -60,18 +60,33 @@ static struct work_struct freq_scale_work;
 static cpumask_t work_cpumask;
 static unsigned int suspended;
 
+enum {
+        SMARTASS_DEBUG_JUMPS=1,
+        SMARTASS_DEBUG_LOAD=2
+};
+
 /*
- * The minimum amount of time to spend at a frequency before we can ramp down,
- * default is 45ms.
+ * Combination of the above debug flags.
  */
-#define DEFAULT_DOWN_RATE_US 99000;
+static unsigned long debug_mask;
+
+/*
+ * The minimum amount of time to spend at a frequency before we can ramp up.
+ */
+#define DEFAULT_UP_RATE_US 12000;
+static unsigned long up_rate_us;
+
+/*
+ * The minimum amount of time to spend at a frequency before we can ramp down.
+ */
+#define DEFAULT_DOWN_RATE_US 49000;
 static unsigned long down_rate_us;
 
 /*
  * When ramping up frequency with no idle cycles jump to at least this frequency.
  * Zero disables. Set a very high value to jump to policy max freqeuncy.
  */
-#define DEFAULT_UP_MIN_FREQ 999999
+#define DEFAULT_UP_MIN_FREQ 0
 static unsigned int up_min_freq;
 
 /*
@@ -95,7 +110,7 @@ static unsigned int sleep_wakeup_freq;
  * go below this frequency.
  * Set awake_min_freq=0 to disable this behavior.
  */
-#define DEFAULT_AWAKE_MIN_FREQ 480000
+#define DEFAULT_AWAKE_MIN_FREQ 518400
 static unsigned int awake_min_freq;
 
 /*
@@ -106,16 +121,17 @@ static unsigned int sample_rate_jiffies;
 
 /*
  * Freqeuncy delta when ramping up.
- * zero disables causes to always jump straight to max frequency.
+ * zero disables and causes to always jump straight to max frequency.
  */
-#define DEFAULT_RAMP_UP_STEP 352000
+#define DEFAULT_RAMP_UP_STEP 256000
 static unsigned int ramp_up_step;
 
 /*
- * Max freqeuncy delta when ramping down. zero disables.
+ * Freqeuncy delta when ramping down.
+ * zero disables and will calculate ramp down according to load heuristic.
  */
-#define DEFAULT_MAX_RAMP_DOWN 352000
-static unsigned int max_ramp_down;
+#define DEFAULT_RAMP_DOWN_STEP 256000
+static unsigned int ramp_down_step;
 
 /*
  * CPU freq will be increased if measured load > max_cpu_load;
@@ -126,7 +142,7 @@ static unsigned long max_cpu_load;
 /*
  * CPU freq will be decreased if measured load < min_cpu_load;
  */
-#define DEFAULT_MIN_CPU_LOAD 20
+#define DEFAULT_MIN_CPU_LOAD 25
 static unsigned long min_cpu_load;
 
 
@@ -155,7 +171,7 @@ static void smartass_update_min_max(struct smartass_info_s *this_smartass, struc
         }
 }
 
-inline static unsigned int validate_freq(struct smartass_info_s *this_smartass, unsigned int freq) {
+inline static unsigned int validate_freq(struct smartass_info_s *this_smartass, int freq) {
         if (freq > this_smartass->max_speed)
                 return this_smartass->max_speed;
         if (freq < this_smartass->min_speed)
@@ -195,7 +211,7 @@ static void cpufreq_smartass_timer(unsigned long data)
 
         delta_idle = cputime64_sub(now_idle, this_smartass->time_in_idle);
         delta_time = cputime64_sub(update_time, this_smartass->idle_exit_time);
-        //printk(KERN_INFO "smartass: t=%llu i=%llu\n",cputime64_sub(update_time,this_smartass->idle_exit_time),delta_idle);
+        //printk(KERN_INFO "smartassT: t=%llu i=%llu\n",cputime64_sub(update_time,this_smartass->idle_exit_time),delta_idle);
 
         // If timer ran less than 1ms after short-term sample started, retry.
         if (delta_time < 1000) {
@@ -208,6 +224,10 @@ static void cpufreq_smartass_timer(unsigned long data)
                 cpu_load = 0;
         else
                 cpu_load = 100 * (unsigned int)(delta_time - delta_idle) / (unsigned int)delta_time;
+
+        if (debug_mask & SMARTASS_DEBUG_LOAD)
+                printk(KERN_INFO "smartassT @ %d: load %d (delta_time %llu), load_since_change %d\n",
+                       policy->cur,cpu_load,delta_time,load_since_change);
 
         // Choose greater of short-term load (since last idle timer
         // started or timer function re-armed itself) or long-term load
@@ -224,6 +244,10 @@ static void cpufreq_smartass_timer(unsigned long data)
 
                 if (nr_running() < 1)
                         return;
+
+                if (cputime64_sub(update_time, this_smartass->freq_change_time) < up_rate_us)
+                        return;
+
 
                 this_smartass->force_ramp_up = 1;
                 cpumask_set_cpu(data, &work_cpumask);
@@ -278,11 +302,12 @@ static void cpufreq_idle(void)
 static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 {
         unsigned int cpu;
-        unsigned int new_freq;
+        int new_freq;
         unsigned int force_ramp_up;
         int cpu_load;
         struct smartass_info_s *this_smartass;
         struct cpufreq_policy *policy;
+        unsigned int relation = CPUFREQ_RELATION_L;
         cpumask_t tmp_mask = work_cpumask;
         for_each_cpu(cpu, tmp_mask) {
                 this_smartass = &per_cpu(smartass_info, cpu);
@@ -291,35 +316,80 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
                 force_ramp_up = this_smartass->force_ramp_up && nr_running() > 1;
                 this_smartass->force_ramp_up = 0;
 
-                //printk(KERN_INFO "Smartass calc_freq: delta_time=%u cpu_load=%u\n",delta_time,cpu_load);
                 if (force_ramp_up || cpu_load > max_cpu_load) {
-                        if (force_ramp_up && up_min_freq)
+                        if (force_ramp_up && up_min_freq) {
                                 new_freq = up_min_freq;
-                        else if (ramp_up_step)
+                                relation = CPUFREQ_RELATION_L;
+                        } else if (ramp_up_step) {
                                 new_freq = policy->cur + ramp_up_step;
-                        else
+                                relation = CPUFREQ_RELATION_H;
+                        } else {
                                 new_freq = this_smartass->max_speed;
+                                relation = CPUFREQ_RELATION_H;
+                        }
                 }
                 else if (cpu_load < min_cpu_load) {
-                        cpu_load += 100 - max_cpu_load; // dummy load.
-                        new_freq = policy->cur * cpu_load / 100;
-                        if (max_ramp_down && new_freq < policy->cur - max_ramp_down)
-                                new_freq = policy->cur - max_ramp_down;
-                        //printk(KERN_INFO "Smartass calc_freq: %u => %u\n",policy->cur,new_freq);
+                        if (ramp_down_step)
+                                new_freq = policy->cur - ramp_down_step;
+                        else {
+                                cpu_load += 100 - max_cpu_load; // dummy load.
+                                new_freq = policy->cur * cpu_load / 100;
+                        }
+                        relation = CPUFREQ_RELATION_L;
                 }
                 else new_freq = policy->cur;
 
                 new_freq = validate_freq(this_smartass,new_freq);
 
-                __cpufreq_driver_target(policy, new_freq,
-                                        CPUFREQ_RELATION_L);
+                if (new_freq != policy->cur) {
+                        if (debug_mask & SMARTASS_DEBUG_JUMPS)
+                                printk(KERN_INFO "SmartassQ: jumping from %d to %d\n",policy->cur,new_freq);
 
-                this_smartass->freq_change_time_in_idle = get_cpu_idle_time_us(cpu,
-                                                        &this_smartass->freq_change_time);
+                        __cpufreq_driver_target(policy, new_freq, relation);
+
+                        this_smartass->freq_change_time_in_idle =
+                                get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
+                }
 
                 cpumask_clear_cpu(cpu, &work_cpumask);
         }
 }
+
+static ssize_t show_debug_mask(struct cpufreq_policy *policy, char *buf)
+{
+        return sprintf(buf, "%lu\n", debug_mask);
+}
+
+static ssize_t store_debug_mask(struct cpufreq_policy *policy, const char *buf, size_t count)
+{
+        ssize_t res;
+        unsigned long input;
+        res = strict_strtoul(buf, 0, &input);
+        if (res >= 0)
+          debug_mask = input;
+        return res;
+}
+
+static struct freq_attr debug_mask_attr = __ATTR(debug_mask, 0644,
+                show_debug_mask, store_debug_mask);
+
+static ssize_t show_up_rate_us(struct cpufreq_policy *policy, char *buf)
+{
+        return sprintf(buf, "%lu\n", up_rate_us);
+}
+
+static ssize_t store_up_rate_us(struct cpufreq_policy *policy, const char *buf, size_t count)
+{
+        ssize_t res;
+        unsigned long input;
+        res = strict_strtoul(buf, 0, &input);
+        if (res >= 0 && input >= 0 && input <= 100000000)
+          up_rate_us = input;
+        return res;
+}
+
+static struct freq_attr up_rate_us_attr = __ATTR(up_rate_us, 0644,
+                show_up_rate_us, store_up_rate_us);
 
 static ssize_t show_down_rate_us(struct cpufreq_policy *policy, char *buf)
 {
@@ -331,7 +401,7 @@ static ssize_t store_down_rate_us(struct cpufreq_policy *policy, const char *buf
         ssize_t res;
         unsigned long input;
         res = strict_strtoul(buf, 0, &input);
-        if (res >= 0 && input >= 1000 && input <= 100000000)
+        if (res >= 0 && input >= 0 && input <= 100000000)
           down_rate_us = input;
         return res;
 }
@@ -439,7 +509,7 @@ static ssize_t store_ramp_up_step(struct cpufreq_policy *policy, const char *buf
         ssize_t res;
         unsigned long input;
         res = strict_strtoul(buf, 0, &input);
-        if (res >= 0)
+        if (res >= 0 && input >= 0)
           ramp_up_step = input;
         return res;
 }
@@ -447,23 +517,23 @@ static ssize_t store_ramp_up_step(struct cpufreq_policy *policy, const char *buf
 static struct freq_attr ramp_up_step_attr = __ATTR(ramp_up_step, 0644,
                 show_ramp_up_step, store_ramp_up_step);
 
-static ssize_t show_max_ramp_down(struct cpufreq_policy *policy, char *buf)
+static ssize_t show_ramp_down_step(struct cpufreq_policy *policy, char *buf)
 {
-        return sprintf(buf, "%u\n", max_ramp_down);
+        return sprintf(buf, "%u\n", ramp_down_step);
 }
 
-static ssize_t store_max_ramp_down(struct cpufreq_policy *policy, const char *buf, size_t count)
+static ssize_t store_ramp_down_step(struct cpufreq_policy *policy, const char *buf, size_t count)
 {
         ssize_t res;
         unsigned long input;
         res = strict_strtoul(buf, 0, &input);
-        if (res >= 0)
-          max_ramp_down = input;
+        if (res >= 0 && input >= 0)
+          ramp_down_step = input;
         return res;
 }
 
-static struct freq_attr max_ramp_down_attr = __ATTR(max_ramp_down, 0644,
-                show_max_ramp_down, store_max_ramp_down);
+static struct freq_attr ramp_down_step_attr = __ATTR(ramp_down_step, 0644,
+                show_ramp_down_step, store_ramp_down_step);
 
 static ssize_t show_max_cpu_load(struct cpufreq_policy *policy, char *buf)
 {
@@ -502,6 +572,8 @@ static struct freq_attr min_cpu_load_attr = __ATTR(min_cpu_load, 0644,
                 show_min_cpu_load, store_min_cpu_load);
 
 static struct attribute * smartass_attributes[] = {
+        &debug_mask_attr.attr,
+        &up_rate_us_attr.attr,
         &down_rate_us_attr.attr,
         &up_min_freq_attr.attr,
         &sleep_max_freq_attr.attr,
@@ -509,7 +581,7 @@ static struct attribute * smartass_attributes[] = {
         &awake_min_freq_attr.attr,
         &sample_rate_jiffies_attr.attr,
         &ramp_up_step_attr.attr,
-        &max_ramp_down_attr.attr,
+        &ramp_down_step_attr.attr,
         &max_cpu_load_attr.attr,
         &min_cpu_load_attr.attr,
         NULL,
@@ -551,8 +623,11 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 
         case CPUFREQ_GOV_LIMITS:
                 smartass_update_min_max(this_smartass,new_policy,suspended);
-                if (this_smartass->cur_policy->cur != this_smartass->max_speed)
+                if (this_smartass->cur_policy->cur != this_smartass->max_speed) {
+                        if (debug_mask & SMARTASS_DEBUG_JUMPS)
+                                printk(KERN_INFO "SmartassI: initializing to %d\n",this_smartass->max_speed);
                         __cpufreq_driver_target(new_policy, this_smartass->max_speed, CPUFREQ_RELATION_H);
+                }
                 break;
 
         case CPUFREQ_GOV_STOP:
@@ -584,12 +659,21 @@ static void smartass_suspend(int cpu, int suspend)
         if (suspend) {
             if (policy->cur > this_smartass->max_speed) {
                     new_freq = this_smartass->max_speed;
+
+                    if (debug_mask & SMARTASS_DEBUG_JUMPS)
+                            printk(KERN_INFO "SmartassS: suspending at %d\n",new_freq);
+
                     __cpufreq_driver_target(policy, new_freq,
                                             CPUFREQ_RELATION_H);
             }
         } else { // resume at max speed:
-                __cpufreq_driver_target(policy, validate_freq(this_smartass,sleep_wakeup_freq),
-                                        CPUFREQ_RELATION_H);
+                new_freq = validate_freq(this_smartass,sleep_wakeup_freq);
+
+                if (debug_mask & SMARTASS_DEBUG_JUMPS)
+                        printk(KERN_INFO "SmartassS: awaking at %d\n",new_freq);
+
+                __cpufreq_driver_target(policy, new_freq,
+                                        CPUFREQ_RELATION_L);
         }
 }
 
@@ -616,6 +700,8 @@ static int __init cpufreq_smartass_init(void)
 {
         unsigned int i;
         struct smartass_info_s *this_smartass;
+        debug_mask = 0;
+        up_rate_us = DEFAULT_UP_RATE_US;
         down_rate_us = DEFAULT_DOWN_RATE_US;
         up_min_freq = DEFAULT_UP_MIN_FREQ;
         sleep_max_freq = DEFAULT_SLEEP_MAX_FREQ;
@@ -623,7 +709,7 @@ static int __init cpufreq_smartass_init(void)
         awake_min_freq = DEFAULT_AWAKE_MIN_FREQ;
         sample_rate_jiffies = DEFAULT_SAMPLE_RATE_JIFFIES;
         ramp_up_step = DEFAULT_RAMP_UP_STEP;
-        max_ramp_down = DEFAULT_MAX_RAMP_DOWN;
+        ramp_down_step = DEFAULT_RAMP_DOWN_STEP;
         max_cpu_load = DEFAULT_MAX_CPU_LOAD;
         min_cpu_load = DEFAULT_MIN_CPU_LOAD;
 
