@@ -73,13 +73,13 @@ static unsigned long debug_mask;
 /*
  * The minimum amount of time to spend at a frequency before we can ramp up.
  */
-#define DEFAULT_UP_RATE_US 12000;
+#define DEFAULT_UP_RATE_US 24000;
 static unsigned long up_rate_us;
 
 /*
  * The minimum amount of time to spend at a frequency before we can ramp down.
  */
-#define DEFAULT_DOWN_RATE_US 24000;
+#define DEFAULT_DOWN_RATE_US 49000;
 static unsigned long down_rate_us;
 
 /*
@@ -95,14 +95,14 @@ static unsigned int up_min_freq;
  * to minimize wakeup issues.
  * Set sleep_max_freq=0 to disable this behavior.
  */
-#define DEFAULT_SLEEP_MAX_FREQ CONFIG_MSM_CPU_FREQ_ONDEMAND_MIN
+#define DEFAULT_SLEEP_MAX_FREQ 352000
 static unsigned int sleep_max_freq;
 
 /*
  * The frequency to set when waking up from sleep.
  * When sleep_max_freq=0 this will have no effect.
  */
-#define DEFAULT_SLEEP_WAKEUP_FREQ CONFIG_MSM_CPU_FREQ_ONDEMAND_MAX
+#define DEFAULT_SLEEP_WAKEUP_FREQ 999999
 static unsigned int sleep_wakeup_freq;
 
 /*
@@ -220,8 +220,17 @@ static void cpufreq_smartass_timer(unsigned long data)
 
         this_smartass->cur_cpu_load = cpu_load;
 
-        // Scale up if load is above max or if there where no idle cycles since coming out of idle.
-        if (cpu_load > max_cpu_load || delta_idle == 0) {
+        // Scale up if load is above max or if there where no idle cycles since coming out of idle,
+        // or when we are above our max speed for a very long time (should only happend if entering sleep
+        // at high loads)
+        if ((cpu_load > max_cpu_load || delta_idle == 0) &&
+            !(policy->cur > this_smartass->max_speed &&
+              cputime64_sub(update_time, this_smartass->freq_change_time) > 100*down_rate_us)) {
+
+                if (policy->cur > this_smartass->max_speed) {
+                        reset_timer(data,this_smartass);
+                }
+
                 if (policy->cur == policy->max)
                         return;
 
@@ -639,17 +648,7 @@ static void smartass_suspend(int cpu, int suspend)
                 return;
 
         smartass_update_min_max(this_smartass,policy,suspend);
-        if (suspend) {
-            if (policy->cur > this_smartass->max_speed) {
-                    new_freq = this_smartass->max_speed;
-
-                    if (debug_mask & SMARTASS_DEBUG_JUMPS)
-                            printk(KERN_INFO "SmartassS: suspending at %d\n",new_freq);
-
-                    __cpufreq_driver_target(policy, new_freq,
-                                            CPUFREQ_RELATION_H);
-            }
-        } else { // resume at max speed:
+        if (!suspend) { // resume at max speed:
                 new_freq = validate_freq(this_smartass,sleep_wakeup_freq);
 
                 if (debug_mask & SMARTASS_DEBUG_JUMPS)
@@ -657,19 +656,31 @@ static void smartass_suspend(int cpu, int suspend)
 
                 __cpufreq_driver_target(policy, new_freq,
                                         CPUFREQ_RELATION_L);
+
+                if (policy->cur < this_smartass->max_speed && !timer_pending(&this_smartass->timer))
+                        reset_timer(smp_processor_id(),this_smartass);
+        } else {
+                // to avoid wakeup issues with quick sleep/wakeup don't change actual frequency when entering sleep
+                // to allow some time to settle down.
+                // we reset the timer, if eventually, even at full load the timer will lower the freqeuncy.
+                reset_timer(smp_processor_id(),this_smartass);
+
+                this_smartass->freq_change_time_in_idle =
+                        get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
+
+                if (debug_mask & SMARTASS_DEBUG_JUMPS)
+                        printk(KERN_INFO "SmartassS: suspending at %d\n",policy->cur);
         }
 }
 
 static void smartass_early_suspend(struct early_suspend *handler) {
         int i;
-        suspended = 1;
         for_each_online_cpu(i)
                 smartass_suspend(i,1);
 }
 
 static void smartass_late_resume(struct early_suspend *handler) {
         int i;
-        suspended = 0;
         for_each_online_cpu(i)
                 smartass_suspend(i,0);
 }
@@ -677,6 +688,7 @@ static void smartass_late_resume(struct early_suspend *handler) {
 static struct early_suspend smartass_power_suspend = {
         .suspend = smartass_early_suspend,
         .resume = smartass_late_resume,
+	.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 1,
 };
 
 static int __init cpufreq_smartass_init(void)
