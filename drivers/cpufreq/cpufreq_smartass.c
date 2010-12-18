@@ -79,7 +79,7 @@ static unsigned long up_rate_us;
 /*
  * The minimum amount of time to spend at a frequency before we can ramp down.
  */
-#define DEFAULT_DOWN_RATE_US 49000;
+#define DEFAULT_DOWN_RATE_US 24000;
 static unsigned long down_rate_us;
 
 /*
@@ -189,7 +189,6 @@ static void cpufreq_smartass_timer(unsigned long data)
         u64 delta_idle;
         u64 delta_time;
         int cpu_load;
-        int load_since_change;
         u64 update_time;
         u64 now_idle;
         struct smartass_info_s *this_smartass = &per_cpu(smartass_info, data);
@@ -199,15 +198,6 @@ static void cpufreq_smartass_timer(unsigned long data)
 
         if (this_smartass->idle_exit_time == 0 || update_time == this_smartass->idle_exit_time)
                 return;
-
-        delta_idle = cputime64_sub(now_idle, this_smartass->freq_change_time_in_idle);
-        delta_time = cputime64_sub(update_time, this_smartass->freq_change_time);
-
-        if (delta_idle > delta_time)
-                load_since_change = 0;
-        else
-                load_since_change =
-                        100 * (unsigned int)(delta_time - delta_idle) / (unsigned int)delta_time;
 
         delta_idle = cputime64_sub(now_idle, this_smartass->time_in_idle);
         delta_time = cputime64_sub(update_time, this_smartass->idle_exit_time);
@@ -226,14 +216,7 @@ static void cpufreq_smartass_timer(unsigned long data)
                 cpu_load = 100 * (unsigned int)(delta_time - delta_idle) / (unsigned int)delta_time;
 
         if (debug_mask & SMARTASS_DEBUG_LOAD)
-                printk(KERN_INFO "smartassT @ %d: load %d (delta_time %llu), load_since_change %d\n",
-                       policy->cur,cpu_load,delta_time,load_since_change);
-
-        // Choose greater of short-term load (since last idle timer
-        // started or timer function re-armed itself) or long-term load
-        // (since last frequency change).
-        if (load_since_change > cpu_load)
-                cpu_load = load_since_change;
+                printk(KERN_INFO "smartassT @ %d: load %d (delta_time %llu)\n",policy->cur,cpu_load,delta_time);
 
         this_smartass->cur_cpu_load = cpu_load;
 
