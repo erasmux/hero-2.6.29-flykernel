@@ -9,9 +9,9 @@ usage() {
 cd "${1:-.}" || usage
 
 if [ -n "`grep BFS=y .config`" ]; then
-    printf '%s' -flykernel-12pre3-BFS
+    printf '%s' -flykernel-12pre4-BFS
 else
-    printf '%s' -flykernel-12pre3
+    printf '%s' -flykernel-12pre4
 fi
 
 exit
