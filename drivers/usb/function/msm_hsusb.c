@@ -1401,11 +1401,16 @@ static DEVICE_ATTR(dummy_usb_serial_number, 0644,
 static ssize_t show_usb_function_switch(struct device *dev, struct device_attribute *attr,
 		char *buf)
 {
-	unsigned length = 0, loop_i;
+	unsigned length = 0, value=0,loop_i;
 	struct msm_hsusb_platform_data *pdata;
 	struct usb_function_info *fi;
 	struct usb_info *ui = the_usb_info;
 	pdata = ui->pdev->dev.platform_data;
+	for (loop_i = 0; loop_i < pdata->num_functions; loop_i++) {
+		fi = usb_find_function(pdata->functions[loop_i]);
+                value += (fi && fi->enabled) ? (1 << fi->func->position_bit) : 0;
+	}
+        length += sprintf(buf + length, "%d\n", value);
 	for (loop_i = 0; loop_i < pdata->num_functions; loop_i++) {
 		fi = usb_find_function(pdata->functions[loop_i]);
 		if (!fi)	{
