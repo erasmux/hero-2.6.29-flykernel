@@ -40,7 +40,7 @@ unsigned int sysctl_sched_latency = 60000000ULL;
  * Minimal preemption granularity for CPU-bound tasks:
  * (default: 4 msec * (1 + ilog(ncpus)), units: nanoseconds)
  */
-unsigned int sysctl_sched_min_granularity = 4000000ULL;
+unsigned int sysctl_sched_min_granularity = 2000000ULL;
 
 /*
  * is kept at sysctl_sched_latency / sysctl_sched_min_granularity
