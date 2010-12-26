@@ -76,6 +76,7 @@
 #include <linux/ctype.h>
 #include <linux/ftrace.h>
 #include <trace/sched.h>
+#include <linux/earlysuspend.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -9843,5 +9844,41 @@ struct cgroup_subsys cpuacct_subsys = {
 	.subsys_id = cpuacct_subsys_id,
 };
 #endif	/* CONFIG_CGROUP_CPUACCT */
+
+#ifdef CONFIG_SCHED_HRTICK
+
+// Fix for wakeup issues when suspended with HRTICK on:
+
+static int sched_suspend_hrtick_restore=0;
+
+static void sched_early_suspend(struct early_suspend *handler) {
+        if (sched_feat(HRTICK)) {
+                sched_suspend_hrtick_restore = 1;
+                sysctl_sched_features &= ~(1UL << __SCHED_FEAT_HRTICK);
+        }
+        else sched_suspend_hrtick_restore = 0;
+}
+
+static void sched_late_resume(struct early_suspend *handler) {
+        if (sched_suspend_hrtick_restore && !sched_feat(HRTICK)) {
+                sched_suspend_hrtick_restore = 0;
+                sysctl_sched_features |= 1UL << __SCHED_FEAT_HRTICK;
+        }
+}
+
+static struct early_suspend sched_power_suspend = {
+        .suspend = sched_early_suspend,
+        .resume = sched_late_resume,
+        .level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 1,
+};
+
+static __init int sched_init_register_suspend(void)
+{
+        register_early_suspend(&sched_power_suspend);
+	return 0;
+}
+late_initcall(sched_init_register_suspend);
+
+#endif // CONFIG_SCHED_HRTICK
 
 #endif /* CONFIG_SCHED_BFS */
