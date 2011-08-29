@@ -135,6 +135,13 @@ config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
 	  you to get a full dynamic cpu frequency capable system by simply
 	  loading your cpufreq low-level hardware driver, using the
 	  'interactive' governor for latency-sensitive workloads.
+
+config CPU_FREQ_DEFAULT_GOV_INTERACTIVEX
+	bool "interactive"
+	select CPU_FREQ_GOV_INTERACTIVEX
+	help
+	  Use the CPUFreq governor 'interactivex' as default.
+
 endchoice
 
 config CPU_FREQ_GOV_PERFORMANCE
@@ -198,6 +205,12 @@ config CPU_FREQ_GOV_INTERACTIVE
 	 'interactive' - This driver adds a dynamic cpufreq policy governor.
 	 Designed for low latency burst workloads. Scaling it done when coming
 	 out of idle instead of polling.
+
+config CPU_FREQ_GOV_INTERACTIVEX
+	tristate "'interactivex' cpufreq policy governor"
+	help
+	  'interactivex' - This driver adds a dynamic cpufreq policy governor
+	  designed for latency-sensitive workloads.
 
 config CPU_FREQ_GOV_CONSERVATIVE
 	tristate "'conservative' cpufreq governor"
